@@ -1,0 +1,518 @@
+---
+title: "Video Game Anaysis"
+author: "Pulkit Dixit"
+date: "April 30, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The purpose of this document is to analyze the sales and ratings of video games over the past couple of decades using visualizations, and create predictive models to predict the sales of video games using the information provided in the dataset.
+
+### Loading Libaries:  
+
+```{r, message = FALSE, warning = FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(cowplot)
+library(caret)
+library(xgboost)
+```
+
+### Data Description:  
+
+*Dataset used:* https://www.kaggle.com/rush4ratio/video-game-sales-with-ratings
+
+
+Video game information scraped from Metacritic. The dataset is a csv file that contains the following columns:  
+- Name - name of the video game
+- Platform - console on which the game can be played (PC, PlayStation, XBox, etc.)
+- Year_of_Release
+- Genre - genre of the game
+- Publisher - name of the company selling the game
+- NA_Sales - North American sales
+- EU_Sales - European sales
+- JP_Sales - Japan sales
+- Other_Sales - Sales from the other parts of the world
+- Global_Sales - Total sales
+- Critic_score - Aggregate score compiled by Metacritic staff
+- Critic_count - The number of critics used in coming up with the Critic_score
+- User_score - Score by Metacritic's subscribers
+- User_count - Number of users who gave the user_score
+- Developer - Party responsible for creating the game
+- Rating - The ESRB ratings
+
+### Data Import:  
+
+```{r, message = FALSE, warning = FALSE}
+df = read.csv('Video_Games_Sales.csv', header = TRUE)
+dim(df)
+```
+
+### Data Cleaning:  
+
+```{r, message = FALSE, warning = FALSE}
+df_clean = df %>% na.omit()
+dim(df_clean)
+```
+
+### Data Visualization:
+
+In this section we aim to use *dplyr* and *ggplot2* to gather a visual perspective of the dataset and identify and analyze any trends that exist. We also hope to use this information to predict the sales of a video game later on.  
+
+#### Video Game Sales and Years:  
+
+To explore video games sales trends, *library(ggplot2)* has been used to visualise changes from 1995 ~ 2015. The file has data from year 1980 ~ 2020 with some titles with unknown release date (N/A). The following analysis excludes titles with unknown release date.  
+
+```{r, echo = FALSE}
+# For line graphs, the data points must be grouped so that it knows which points to connect. So, add group=1 to aes() in ggplot to draw the line
+NumberGames = df_clean %>% filter(Year_of_Release %in% c(1995: 2015)) %>% group_by(Year_of_Release) %>% summarise(Total = n())
+JPVSYear = df_clean %>% filter(Year_of_Release %in% c(1995: 2015)) %>% group_by(Year_of_Release) %>% summarise(TotalSales = sum(JP_Sales))
+
+# For line graphs, the data points must be grouped so that it knows which points to connect. So, add group=1 to aes() in ggplot to draw the line
+NAVSYear = df_clean %>% filter(Year_of_Release %in% c(1995: 2015)) %>% group_by(Year_of_Release) %>% summarise(TotalSales = sum(NA_Sales))
+EUVSYear = df_clean %>% filter(Year_of_Release %in% c(1995: 2015)) %>% group_by(Year_of_Release) %>% summarise(TotalSales = sum(EU_Sales))
+OVSYear = df_clean %>% filter(Year_of_Release %in% c(1995: 2015)) %>% group_by(Year_of_Release) %>% summarise(TotalSales = sum(Other_Sales))
+JPVSYear$group = 'Japan'
+NAVSYear$group = 'North America'
+EUVSYear$group = 'Europe'
+OVSYear$group = 'Other'
+combin = rbind(JPVSYear, NAVSYear, EUVSYear, OVSYear)
+
+plot1 = ggplot(NumberGames, aes(Year_of_Release , Total, group=1)) + 
+  scale_x_discrete(breaks = seq(1995, 2015, by = 2)) + 
+  ggtitle("Number of Games Released by Year") + 
+  labs(x = "Year of Release", y = "Number of Games") + 
+  geom_line() + 
+  geom_point() +
+  theme_grey()
+
+plot2 = ggplot(combin, aes(Year_of_Release , TotalSales, group=group, col=group)) + 
+  scale_x_discrete(breaks = seq(1995, 2015, by = 2)) + 
+  ggtitle("Global Total Sales and Year") + 
+  labs(x = "Year of Release", y = "Total Sales (in millions of units)") + 
+  geom_line() + 
+  geom_point() +
+  theme_grey()
+
+temp = df_clean %>% filter(Critic_Score > 95) %>% group_by(Developer) %>% summarise(total = n()) 
+plot3 = ggplot(temp, aes(x = temp$Developer, y = total)) + geom_bar(stat = "identity")  + coord_flip() + labs(title="Developers with Most Number of Well-received Games", x ="Developers", y = "Number of Titles with Critic Score > 95")
+grid.arrange(plot1, plot2)
+```
+
+#### Annual Sales for Platforms by Region:  
+
+The plot below shows the annual sales for each available platform. This data has been seperated based on region as well. 
+
+```{r, message = FALSE, warning = FALSE, fig.width=15, fig.height=6}
+#unique(df_clean$Platform)
+df_clean %>% 
+  select(Platform, Year_of_Release, NA_Sales, EU_Sales, JP_Sales, Other_Sales) %>% 
+  filter(Year_of_Release %in% c(1995: 2015)) %>% 
+  group_by(Year_of_Release, Platform) %>%
+  summarise('North America' = sum(NA_Sales), 'Europe' = sum(EU_Sales), 'Japan' = sum(JP_Sales), 'Rest of the World' = sum(Other_Sales)) %>%
+  gather('Region', 'Sales', -c('Year_of_Release', 'Platform')) %>%
+  ggplot(aes(x = Year_of_Release, y = Sales, fill = Platform)) +
+  geom_bar(stat = 'identity') +
+  facet_wrap(~ Region, ncol = 2) +
+  xlab('Year') + 
+  ylab('Sales in $ (in millions)') + 
+  ggtitle('Annual Sales for Platforms by Region (1995-2015)') + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  theme_grey()
+```
+
+From the above plot, it can be observed that early video games were sold mostly for PC and PlayStation. Sales for XBox began in the early 2000's and those for Wii began in the mid-2000's. Post the mid-2000's new consoles from new manufacturers became rare, and most consoles were newer generations of the three major companies - Sony PlayStation, Microsoft PC and XBox, and Nintendo.  
+
+Also, it is clear to see that North America is the biggest video game market in the world. More video games are sold in North America than in all of Europe.  
+#### Top 25 Bestselling Games:  
+
+The below plot shows the top 25 bestselling games since 1995.  
+
+```{r, message = FALSE, warning = FALSE, fig.width=12, fig.height=8}
+df_clean %>%
+  select(Name, Global_Sales, Year_of_Release) %>%
+  filter(Year_of_Release %in% c(1995: 2015)) %>% 
+  group_by(Name) %>%
+  summarise(Sales = sum(Global_Sales)) %>%
+  arrange(desc(Sales)) %>%
+  top_n(25, Sales) %>%
+  ggplot(aes(reorder(Name, Sales), Sales)) +
+  geom_col(fill = 'coral') +
+  coord_flip() +
+  ylab('Sales in $ (in millions)') + 
+  xlab('Game') + 
+  ggtitle('Top 25 Bestselling Games (1995 - 2015)') + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  theme_grey()
+```
+
+The plot above shows that 3 of the top 5 bestselling games since 1995 are from the Wii platform. Since these games are intended for kids, it proves that children are still the best target age group for video games sellers. This fact is further cemented by the sales of the Super Mario series, which has 5 titles in the top 15. In terms of more mature games, the Call of Duty and Grand Theft Auto series have traditionally sold very well, with both franchises having multiple games in the top 15.  
+
+#### Bestselling Pulishers:  
+
+Publishing companies are responsible for the world-wide distribution of video games. Some companies like Activision and Electronic Arts release games across multiple platforms, while some like Sony, Nintendo and Microsoft release games for select platforms. The plot below displays the sales of the top 25 bestselling publishers since 1995 along with the number of games released by them since 1995.  
+
+```{r, message = FALSE, warning = FALSE, fig.width=12, fig.height=8}
+p1 = df_clean %>%
+      select(Publisher, Name, Global_Sales, Year_of_Release) %>%
+      filter(Year_of_Release %in% c(1995: 2015)) %>%
+      select(Publisher, Name, Global_Sales) %>%
+      #filter(Publisher %in% c('Nintendo')) %>%
+      group_by(Publisher) %>%
+      summarise('Sales' = sum(Global_Sales), 'Number of Games' = n()) %>%
+      arrange(desc(`Sales`)) %>%
+      top_n(25, `Sales`) %>%
+      ggplot(aes(reorder(Publisher, Sales), Sales)) +
+      geom_col(fill = 'aquamarine2') +
+      coord_flip() +
+      ylab('Sales in $ (in millions)') +
+      xlab('Publisher') +
+      ggtitle('Bestselling Publishers (1995 - 2015)') +
+      theme(plot.title = element_text(hjust = 0.5))
+
+p2 = df_clean %>%
+      select(Publisher, Name, Global_Sales, Year_of_Release) %>%
+      filter(Year_of_Release %in% c(1995: 2015)) %>%
+      select(Publisher, Name, Global_Sales) %>%
+      #filter(Publisher %in% c('Nintendo')) %>%
+      group_by(Publisher) %>%
+      summarise('Sales' = sum(Global_Sales), 'Number of Games' = n()) %>%
+      arrange(desc(`Sales`)) %>%
+      top_n(25, `Sales`) %>%
+      ggplot(aes(reorder(Publisher, Sales), `Number of Games`)) +
+      geom_col(fill = 'aquamarine2') +
+      scale_y_reverse() +
+      coord_flip() +
+      scale_y_reverse() +
+      ylab('Number of Games') +
+      xlab(NULL) +
+      ggtitle('Number of Games (1995 - 2015)') +
+      theme(plot.title = element_text(hjust = 0.5), 
+            axis.text.y=element_blank(), 
+            axis.ticks.y=element_blank())
+
+plot_grid(p1, p2, ncol = 2, rel_widths = c(2/3, 1/3))
+```
+
+The purpose of the plot above is to understand if the high sales of bestselling publishers can be attributed to constant releases of titles or the freakish success of a few games. Examples of both cases can be seen in the plot above. Publishers like Electronic Arts, Activision and Ubisoft are amongst the top 10 bestselling publishers, and each have released more than 500 titles from 1995 to 2015. Alternatively, Nintendo, which is the bestselling publisher, has only released around 300 titles in that period. The same is the case for Take-Two Interactive, Sony and Microsoft, all of whom focus on taking time to build detailed video games for a very limited number of franchises.  
+
+#### Bestselling Developers:  
+
+Developers are responsible for creating video games. Some developers form multiple subsidiaries so that each branch can work on different titles, thus enabling big developers to create many titles at a time. The plot below compares the sales and number of releases of the top 25 bestselling developers from 1995 to 2015.  
+
+```{r, message = FALSE, warning = FALSE, fig.width=12, fig.height=8}
+p3 = df_clean %>%
+      select(Developer, Name, Global_Sales, Year_of_Release) %>%
+      filter(Year_of_Release %in% c(1995: 2015)) %>%
+      select(Developer, Name, Global_Sales) %>%
+      #filter(Publisher %in% c('Nintendo')) %>%
+      group_by(Developer) %>%
+      summarise('Sales' = sum(Global_Sales), 'Number of Games' = n()) %>%
+      arrange(desc(`Sales`)) %>%
+      top_n(25, `Sales`) %>%
+      ggplot(aes(reorder(Developer, Sales), Sales)) +
+      geom_col(fill = 'darkseagreen1') +
+      coord_flip() +
+      ylab('Sales in $ (in millions)') +
+      xlab('Developer') +
+      ggtitle('Bestselling Developer (1995 - 2015)') +
+      theme(plot.title = element_text(hjust = 0.5))
+
+p4 = df_clean %>%
+      select(Developer, Name, Global_Sales, Year_of_Release) %>%
+      filter(Year_of_Release %in% c(1995: 2015)) %>%
+      select(Developer, Name, Global_Sales) %>%
+      #filter(Publisher %in% c('Nintendo')) %>%
+      group_by(Developer) %>%
+      summarise('Sales' = sum(Global_Sales), 'Number of Games' = n()) %>%
+      arrange(desc(`Sales`)) %>%
+      top_n(25, `Sales`) %>%
+      ggplot(aes(reorder(Developer, Sales), `Number of Games`)) +
+      geom_col(fill = 'darkseagreen1') +
+      scale_y_reverse() +
+      coord_flip() +
+      scale_y_reverse() +
+      ylab('Number of Games') +
+      xlab(NULL) +
+      ggtitle('Number of Games (1995 - 2015)') +
+      theme(plot.title = element_text(hjust = 0.5), 
+            axis.text.y=element_blank(), 
+            axis.ticks.y=element_blank())
+
+plot_grid(p3, p4, ncol = 2, rel_widths = c(2/3, 1/3)) 
+```
+
+The above plot shows that Nintendo develops and publishes its own games. The second highest selling publisher Electronic Arts works as a combination of many developers like EA Sports, EA Canada, etc. Likewise for Ubisoft with Ubisoft and Ubisoft Montreal, and Activision with Treyarch and Infinity Ward.  
+
+#### Comparison between Critic Scores and Number of Critics:  
+
+The purpose of the below plot is to check if games that have more critics rate them also happen to be higher rated. If that is the case, do these games end up selling more copies?  
+
+```{r, message = FALSE, warning = FALSE, fig.width=8, fig.height=8}
+df_clean %>%
+  select(Name, Global_Sales, Year_of_Release, Critic_Count, Critic_Score) %>%
+  filter(Year_of_Release %in% c(1995:2015)) %>%
+  select(Name, Global_Sales, Critic_Count, Critic_Score) %>%
+  group_by(Name) %>%
+  summarise('Sales ($ millions)' = sum(Global_Sales), Users = sum(Critic_Count), Rating = mean(Critic_Score)) %>%
+  arrange(desc(`Sales ($ millions)`)) %>%
+  ggplot(aes(y = Users, x = Rating)) + 
+  geom_point(aes(size = `Sales ($ millions)`), col = 'lightsalmon') + 
+  geom_smooth(method="loess", se=F) +
+  xlab('Average Rating') + 
+  ylab('Number of Critics') + 
+  ggtitle('Avg Critics Ratings vs Number of Critics') + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme_grey()
+```
+
+The plot above shows a trend of more reviewers for higher rated games. This could be because better games have wider releases, or due to bias shown by a critic w.r.t. one or more previous reviews of the game by another critic. It can also be seen that higher ratings and reviewers lead to more sales for the respective games.  
+
+#### Comparison of Sales for Different Content Ratings:  
+
+The below plot is a boxplot of all availabe content ratings of games from 1995 to 2015. This plot was made for the 1000 best-selling games with the intention of shedding some light on whether the bestselling games belong to only a couple of select ratings, or if all age groups buy games in equal amounts.  
+
+```{r, message = FALSE, warning = FALSE, fig.width=7, fig.height=5}
+df_clean %>%
+  select(Name, Global_Sales, Year_of_Release, Rating) %>%
+  filter(Year_of_Release %in% c(1995:2015)) %>%
+  filter(Rating %in% c('AO', 'E', 'E10+', 'EC', 'K-A', 'M', 'RP', 'T')) %>%
+  select(Name, Global_Sales, Rating) %>%
+  group_by(Name, Rating) %>%
+  summarise(Sales = sum(Global_Sales)) %>%
+  arrange(desc(Sales)) %>%
+  ungroup() %>%
+  top_n(1000, Sales) %>% 
+  ggplot(aes(Rating, Sales)) +
+  geom_boxplot(col = 'mediumpurple', fill = 'lightsteelblue1') +
+  xlab('Rating') + 
+  ylab('Sales') + 
+  ggtitle('Boxplot of Ratings vs Sales of the 1000 Bestselling Games (1995-2015)') + 
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme_grey()
+```
+
+The plot shows that kids aged 5-10 and mature adults are the bestselling in general. They have high average sales and a lot of games that had sales above the 3rd quartile. AO and K-A are the least popular ratings, with low numbers for sales and a low count of games released as well.  
+
+### Data Modeling:  
+
+#### Linear Model:  
+
+In this section, we aim to predict the sales of a video game based on the information given in the dataset. For this section, we only aim to predict the global sales, and hence the below code creates a new data frame removing the Name (not needed since almost each value is unique) and the region-specific sales columns. Since there are more than 1,000 unique developers and only 7,000 rows in the dataset, the developer column can be removed as well.  
+
+```{r, message=FALSE, warning=FALSE}
+#Removing Name and non-global Sales columns:
+df_model = df_clean[, -c(1, 6:9, 15)]
+
+#Converting User Scores and Years to numbers:
+df_model$User_Score = as.numeric(df_model$User_Score)
+df_model$Year_of_Release = as.numeric(as.character(df_model$Year_of_Release))
+
+#Removing any NAs that might be introduced due to coercion from factor to numeric:
+df_model = na.omit(df_model)
+head(df_model)
+```
+
+The next step is to split the data into training and testing sets:  
+
+```{r}
+set.seed(1)
+index = createDataPartition(df_model$Global_Sales, 
+                            p = .8, 
+                            list = FALSE, 
+                            times = 1)
+train.data = df_model[index,]
+test.data = df_model[-index,]
+```
+
+Next, we fit training the data into a linear regression model, and perform backward selection to identify important variables for the model.  
+
+```{r}
+model = lm(Global_Sales ~ ., data = train.data)
+step(model, direction = 'backward')
+```
+
+It can be seen from the above output that Publisher is considered to be unimportant by the linear model. The summary of the best linear model is shown below:  
+
+```{r}
+final_model = lm(Global_Sales ~ Platform + Year_of_Release + Genre + Critic_Score + Critic_Count + User_Score + User_Count + Rating, 
+               data = train.data)
+summary(final_model)
+```
+
+It can be observed from the above summary that user and critic scores and numbers along with platform and genre are significant in predicting the sales of a game. Also, even though ratings are not considered significant in the model, they help predicting the sales and thus need to be included in the model.  
+
+The diagnostics of the linear model are shown below:  
+
+```{r, message=FALSE, warning=FALSE}
+par(mfrow = c(2,2))
+plot(final_model)
+```
+
+It can be seen from the above plots that the linear model, even with the best selection of parameters, is not a good model to predict sales, given the variables in the dataset. A few observations from the diagnostics are:  
+* Observation 1 is an outlier and should be removed from the model.  
+* The distribution of residuals vs fitted is not spread out enough to indicate that the relationship between the variables and response is linear.  
+* The normal Q-Q plot is not a straight line, implying that the errors are not normally distributed.  
+* The trend line of the Scale-Location plot is not a straight line. This is further evidence that the model is not inherently linear.  
+* There are no influential observations in the model, although #1 comes pretty close.  
+
+The training RMSE for this model is:  
+
+```{r}
+paste('Training RMSE: ', sqrt(mean((train.data[,5] - fitted(final_model))^2)))
+```
+
+
+The code below shows predicts sales for the testing set and prints the test RMSE.
+
+```{r}
+pred = predict(final_model, newdata = test.data[, -5])
+linearTestRMSE = sqrt(mean((test.data[,5] - pred)^2))
+paste('Test RMSE: ', linearTestRMSE)
+```
+
+It can be seen from the above values that the model performs better on the test data than on the training data. However, it is still worth trying to fit a tree based model on the dataset as well, given that the underlying model does not seem to be inherently linear.  
+
+#### Boosted Tree Model:  
+
+This section focuses on training and fitting a boosted tree on the dataset to check if it can do a better job of predicting sales for video games.  
+
+First, the training and testing datasets need to be converted into XGB matrices so that they can be inputted into an XGBoost model. For this, the factors in the dataset must first be encoded into numberic values. The code below performs one-hot encoding on all the factor variables in the dataset.
+
+```{r}
+features = c('Platform', 'Genre', 'Publisher', 'Rating')
+dummies = dummyVars(~ Platform + Genre + Publisher + Rating , data = df_model)
+df_encoded = as.data.frame(predict(dummies, newdata = df_model))
+df_tree <- cbind(df_model[,-c(which(colnames(df_model) %in% features))],df_encoded)
+head(df_tree)
+```
+
+Splitting the new data set into training and testing data:  
+
+```{r}
+tree.x.train = df_tree[index, -2]
+tree.y.train = df_tree[index, 2]
+tree.x.test = df_tree[-index, -2]
+tree.y.test = df_tree[-index, 2]
+```
+
+Creating XGB matrices from the training and testing data:  
+
+```{r}
+train = data.matrix(tree.x.train)
+test = data.matrix(tree.x.test)
+
+xtrain = xgb.DMatrix(data = train, label = tree.y.train)
+xtest = xgb.DMatrix(data = test)
+```
+
+Creating a grid of possible parameter values for cross validation:  
+
+```{r message=FALSE, warning=FALSE}
+#Creating a grid with possible values of tuning parameters:
+hyper_grid = expand.grid(
+                        eta = c(.01, .05, .1),
+                        max_depth = c(1, 5, 9),
+                        min_child_weight = c(1, 3, 5),
+                        subsample = c(0.5, .8, 1), 
+                        colsample_bytree = c(.9, 1),
+                        min_test_rmse_mean = 0             
+                      )
+```
+
+Performing 3 fold cross validation:  
+
+```{r include=FALSE, message=FALSE, warning=FALSE}
+#Beginning iterations for each combination of values in the grid:
+for(i in 1:nrow(hyper_grid)) {
+  #Storing the values of each column of the current row of the grid as the respective parameters:
+  parameters =  list(
+                  eta = hyper_grid$eta[i],
+                  max_depth = hyper_grid$max_depth[i],
+                  min_child_weight = hyper_grid$min_child_weight[i],
+                  subsample = hyper_grid$subsample[i],
+                  colsample_bytree = hyper_grid$colsample_bytree[i]
+                )
+  
+  #Ensuring the same results for each run of the loop:
+  set.seed(1)
+  
+  #Tuning the model on the full data set using cross validation:
+  xgb.tune = xgb.cv(
+                    params = parameters,
+                    data = xtrain,
+                    nrounds = 200,
+                    nfold = 3,
+                    objective = "reg:linear",  
+                    verbose = 0,               
+                    early_stopping_rounds = 10, 
+                    booster = 'gbtree',
+                    eval_metric = 'rmse'
+                  )
+  
+  #Storing the values minimum mean test errors for the dataset:
+  hyper_grid$min_test_error_mean[i] = min(xgb.tune$evaluation_log$test_rmse_mean)
+
+}
+```
+
+The best combination of hyperparameters is:  
+
+```{r}
+hyper_grid[which.min(hyper_grid$min_test_error_mean),]
+```
+
+The code below shows the training of a model with this combination and then making predictions for the test set:  
+
+```{r}
+xgb.model = xgboost(data = xtrain, 
+              objective = "reg:linear", 
+              nrounds = 200, 
+              verbose = 0, 
+              booster = 'gbtree',
+              eta = 0.05,
+              max_depth = 5,
+              min_child_weight = 3,
+              subsample = 0.8,
+              colsample_bytree = 0.9
+              )
+xgb.pred = predict(xgb.model, newdata = xtest)
+```
+
+The RMSE for the model is: 
+
+```{r}
+paste('Training RMSE', min(xgb.model$evaluation_log$train_rmse))
+paste('Test RMSE: ', sqrt(mean((tree.y.test-xgb.pred)^2)))
+```
+
+The above results are significantly better than the ones obtained for linear regression. In conclusion, it can be concurred that a boosted tree model can be created to predict the sales of a video game to within 1.39 million dollars of its actual sales value.  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
